@@ -60,6 +60,8 @@ public class FoundationDBClient extends DB {
   private static final String EXTERNAL_CLIENT_DIRECTORY_DEFAULT = ".";
   private static final String TRACE_DIRECTORY            = "foundationdb.tracedirectory";
   private static final String TRACE_DIRECTORY_DEFAULT    = "";
+  private static final String RETRY_LIMIT                = "foundationdb.retrylimit";
+  private static final String RETRY_LIMIT_DEFAULT        = "5";
   private static final String SET_TRANSACTION_TRACE      = "foundationdb.settransactiontrace";
   private static final String SET_TRANSACTION_TRACE_DEFAULT = "";
   private static final String TRANSACTION_TRACE_FRACTION = "foundationdb.transactiontracefraction";
@@ -92,6 +94,8 @@ public class FoundationDBClient extends DB {
         = Integer.parseInt(props.getProperty(CLIENT_THREADS_PER_VERSION, CLIENT_THREADS_PER_VERSION_DEFAULT));
     String externalClientDirectory
         = props.getProperty(EXTERNAL_CLIENT_DIRECTORY, EXTERNAL_CLIENT_DIRECTORY_DEFAULT);
+    int retryLimit
+        = Integer.parseInt(props.getProperty(RETRY_LIMIT, RETRY_LIMIT_DEFAULT));
     String traceDirectory = props.getProperty(TRACE_DIRECTORY, TRACE_DIRECTORY_DEFAULT);
     String traceFormat = props.getProperty(TRACE_FORMAT, TRACE_FORMAT_DEFAULT);
     logger.info("API Version: {}", apiVersion);
@@ -110,8 +114,8 @@ public class FoundationDBClient extends DB {
           if (clientThreadsPerVersion != 0) {
             logger.info("Threads per version: {}", clientThreadsPerVersion);
             fdb.options().setClientThreadsPerVersion(clientThreadsPerVersion);
-            if (externalClientDirectory == EXTERNAL_CLIENT_DIRECTORY_DEFAULT) { 
-              throw new IllegalArgumentException(EXTERNAL_CLIENT_DIRECTORY + " must be set because " 
+            if (externalClientDirectory == EXTERNAL_CLIENT_DIRECTORY_DEFAULT) {
+              throw new IllegalArgumentException(EXTERNAL_CLIENT_DIRECTORY + " must be set because "
                 + CLIENT_THREADS_PER_VERSION + " is set.");
             }
             fdb.options().setExternalClientDirectory(externalClientDirectory);
@@ -127,6 +131,8 @@ public class FoundationDBClient extends DB {
       dbs = new Database[clusterFiles.length];
       for (int i = 0; i < clusterFiles.length; i++) {
         dbs[i] = fdb.open(clusterFiles[i]);
+        // Retry transactions a fixed number of times so that threads never get stuck in infinite retry loops.
+        dbs[i].options().setTransactionRetryLimit(retryLimit);
         if (datacenterId != "") {
           logger.info("Datacenter ID: {}", datacenterId);
           dbs[i].options().setDatacenterId(datacenterId);
@@ -201,7 +207,7 @@ public class FoundationDBClient extends DB {
     tr.options().setLogTransaction();
     tr.options().setServerRequestTracing();
   }
-  
+
   private void batchInsert(int dbIndex) {
     try {
       dbs[dbIndex].run(tr -> {
